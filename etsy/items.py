@@ -7,7 +7,7 @@
 
 import scrapy
 from w3lib.html import remove_tags
-from scrapy.loader.processors import MapCompose, TakeFirst, Join
+from itemloaders.processors import TakeFirst, MapCompose, Join
 
 # Remove extras spaces in strings
 def strip_space(value):
@@ -45,6 +45,8 @@ class ProductItem(scrapy.Item):
                             output_processor=TakeFirst())
     count_of_images = scrapy.Field(output_processor=TakeFirst())
 
+    base_image_url = scrapy.Field(output_processor=TakeFirst())
+
     images_urls = scrapy.Field(input_processor=MapCompose(normalize_space, remove_tags, strip_space),
                               output_processor=Join(','))
 
@@ -61,4 +63,8 @@ class ProductItem(scrapy.Item):
     return_location = scrapy.Field(input_processor=MapCompose(normalize_space, remove_tags, strip_space),
                                     output_processor=TakeFirst())
 
-    reviews = scrapy.Field()
+    users = scrapy.Field()
+
+    ratings = scrapy.Field()
+
+    reviews_count = scrapy.Field(output_processor=TakeFirst())

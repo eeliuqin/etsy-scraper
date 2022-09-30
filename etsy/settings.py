@@ -20,17 +20,31 @@ USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = False
 
+# Set it to False to disable default logging
+LOG_ENABLED = True
+
 # Data fields that are exported to csv or Json output
-FEED_EXPORT_FIELDS = ['title', 'product_id', 'url', 'price', 'rating', 'number_of_reviews', 'product_options', 'count_of_images', 'images_urls', 'favorited_by', 'store_name', 'description', 'reviews']
+FEED_EXPORT_FIELDS = [
+    'product_id',
+    'title',
+    'url',
+    'price',
+    'favorited_by',
+    'store_name',
+    'reviews_count',
+    'users',
+    'ratings',
+]
 
-# Configure maximum concurrent requests performed by Scrapy (default: 16)
-CONCURRENT_REQUESTS = 2
+# Configure the maximum number of concurrent (i.e. simultaneous) requests that will be performed to any single domain
+# default value is 8, lower it to make the spider more polite
+CONCURRENT_REQUESTS_PER_DOMAIN = 4
 
-# Configure a delay for requests for the same website (default: 0)
+# Configure a delay for requests for the same website to avoid being blocked(default: 0)
 # See https://doc.scrapy.org/en/latest/topics/settings.html#download-delay
 # See also autothrottle settings and docs
-#DOWNLOAD_DELAY = 1
-#RANDOMIZE_DOWNLOAD_DELAY = True
+DOWNLOAD_DELAY = 0.5
+RANDOMIZE_DOWNLOAD_DELAY = True
 
 # The download delay setting will honor only one of:
 #CONCURRENT_REQUESTS_PER_DOMAIN = 16

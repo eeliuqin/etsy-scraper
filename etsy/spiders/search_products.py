@@ -3,8 +3,9 @@
 #title           :search_products.py
 #description     :A spider to scrape etsy.com products based on a search string.
 #author          :Patrick Alves (cpatrickalves@gmail.com)
-#last Update     :12-02-2019
-#usage           :scrapy crawl search_products -a search='3d printed' -o products.csv
+#updated by      :Qin Liu (eeliuqin@gmail.com)
+#last Update     :09-28-2022
+#usage           :scrapy crawl search_products -a search='animal succulent planter' -a total_page_count=2 -a start_page=1 -o sample-search-products.csv
 #python version  :3.6
 #==============================================================================
 
@@ -15,7 +16,6 @@ import sys
 import csv
 import glob
 import json
-from openpyxl import Workbook
 from scrapy.http import Request
 from etsy.items import ProductItem
 from scrapy.loader import ItemLoader
@@ -27,47 +27,56 @@ class ProductsSpider(scrapy.Spider):
     allowed_domains = ['etsy.com']
     start_urls = ['https://www.etsy.com/']
 
-    # Max number of items
-    COUNT_MAX = 10**100
+    # Default number of pages to scrapy
+    TOTAL_PAGE_COUNT = 10
+
+    # Number of products per page of search results
+    PRODUCTS_CNT_PER_PAGE = 12
+
     # Count the number of items scraped
     COUNTER = 0
+
+    # Start page number
+    START_PAGE = 1
 
     # Get only the products URLs
     URLS_ONLY = False
 
-    # Set the method to get the product reviews
-    # If set to 1 (default), Spider will get only the reviews in the product's page, the default value is 4 reviews [FAST SCRAPING]
-    # If set to 2, Spider will produce a Ajax request to get all reviews in the product's page, that is, a maximum of 10 reviews
-    # If set to 3, Spider will visit the page with all store reviews and get all the reviews for this specific product [SLOWER SCRAPING]
-    reviews_opt = None
+    # Number of reviews per page in reviews section
+    REVIEWS_CNT_PER_PAGE = 4
 
-    def __init__(self, search, reviews_option=1, count_max=None, urls_only=False, *args, **kwargs):
+
+    def __init__(self, search, total_page_count=1, urls_only=False, start_page=1, *args, **kwargs):
         if search:
             # Build the search URL
-            self.start_urls = ['https://www.etsy.com/search?q={}&ref=pagination&page=1'.format(search)]
-            # Set the maximum number of items to be scraped
-            if count_max:
-                self.COUNT_MAX = int(count_max)
+            # With start_page, we can start from the last blocked page
+            self.start_urls = [f'https://www.etsy.com/search?q={search}&ref=pagination&page={start_page}']
+            # Set the maximum number of pages
+            if total_page_count:
+                self.TOTAL_PAGE_COUNT = int(total_page_count)
+
+            if start_page:
+                self.START_PAGE = int(start_page)
 
             # Get only the products URLs
             self.URLS_ONLY = bool(urls_only)
-            # Set the chosen review option
-            self.reviews_opt = int(reviews_option)
 
         super(ProductsSpider, self).__init__(*args, **kwargs)
 
 
     # Parse the first page result and go to the next page
     def parse(self, response):
+        c_page = int(response.url.split('=')[-1])
+        print(f"parse url {response.url}, page number: {c_page}")
 
         # Get the list of products from html response
-        products_list = response.xpath('//div[@data-search-results=""]/div//li//a/@href').extract()
+        products_list = response.xpath('//div[@data-search-results=""]/div//li//a[contains(@class, "listing-link")]/@href').extract()
         products_id_list = [product_href.split("/")[4] for product_href in products_list]
 
-        # For each product extracts the product URL
+
         print(f"#### FOUND {len(products_id_list)} PRODUCTS")
 
-        if self.URLS_ONLY:
+        if self.URLS_ONLY: # Get the url without go to the product page
             for product_id in products_id_list:
 
                 # Create the ItemLoader object that stores each product information
@@ -77,192 +86,160 @@ class ProductsSpider(scrapy.Spider):
                 l.add_value('url', product_url)
                 yield l.load_item()
 
-        else:
+        else: # Go to the product's page to fetch price/title/ratings
             for product_id in products_id_list:
                 product_url = f'https://www.etsy.com/listing/{product_id}'
-                # Stops if the COUNTER reaches the maximum set value
-                if self.COUNTER < self.COUNT_MAX:
-                    # Go to the product's page to get the data
-                    yield scrapy.Request(product_url, callback=self.parse_product, dont_filter=True)
+                
+                yield scrapy.Request(product_url, callback=self.parse_product, dont_filter=True)
 
-        # Pagination - Go to the next page
-        current_page_number = int(response.url.split('=')[-1])
-        next_page_number = current_page_number + 1
-        # Build the next page URL
-        next_page_url = '='.join(response.url.split('=')[:-1]) + '=' + str(next_page_number)
+        # Stops if already scraped TOTAL_PAGE_COUNT pages
+        # Otherwise go to the next page
+        if c_page - self.START_PAGE < self.TOTAL_PAGE_COUNT - 1:
+            next_page_number = c_page + 1
+            next_page_url = '='.join(response.url.split('=')[:-1]) + '=' + str(next_page_number)
 
-        # If the current list is not empty
-        if len(products_id_list) > 0:
-            yield scrapy.Request(next_page_url)
+            # If the current list is not empty
+            if len(products_id_list) > 0:
+                yield scrapy.Request(next_page_url)
 
 
     # Get the HTML from product's page and get the data
     def parse_product(self, response):
+        # Get the product ID (ex: 666125766)
+        product_id = response.url.split('/')[4]
+        # c_page = int(response.url.split('=')[-1])
+        print(f"parse_product() for product {product_id}")
 
         # Stops if the COUNTER reaches the maximum set value
-        if self.COUNTER >= self.COUNT_MAX:
-            raise scrapy.exceptions.CloseSpider(reason='COUNT_MAX value reached - {} items'.format(self.COUNT_MAX))
+        if self.COUNTER >= self.TOTAL_PAGE_COUNT * self.PRODUCTS_CNT_PER_PAGE:
+            print("max count reached")
+            raise scrapy.exceptions.CloseSpider(reason='Max count reached - {} items'.format(self.COUNTER))
 
         # Check if the product is available
         no_available_message = response.xpath('//h2[contains(text(), "Darn")]')
         if no_available_message:
+            print("the product is not available")
             return []
 
         # Create the ItemLoader object that stores each product information
         l = ItemLoader(item=ProductItem(), response=response)
 
-        # Get the product ID (ex: 666125766)
-        product_id = response.url.split('/')[4]
         l.add_value('product_id', product_id)
 
         # Get the produc Title
-        #l.add_xpath('title', '//meta[@property="og:title"]/@content')
-        l.add_xpath('title', '//div[@data-component="listing-page-title-component"]/h1/text()')
-        #l.add_xpath('title', "//h1[@data-listing-id='{}']".format(response.url.split('/')[4]))
+        l.add_xpath('title', '//meta[@property="og:title"]/@content')
 
         # Get the product price
-        l.add_xpath('price', '//*[contains(@data-buy-box-region, "price")]//p')
+        l.add_xpath('price', '//div[contains(@data-buy-box-region, "price")]//p//text()', re='(\d+(?:\.\d+)?)')
 
         # Get the product URL (ex: www.etsy.com/listing/666125766)
         l.add_value('url', '/'.join(response.url.split('/')[2:5]))
 
-        # Get the product description
-        l.add_xpath('description', '//div[@data-id="description-text"]/div/p/text()')
+        # # ========== Start: QL comment out, feel free to add them back ==========
+        # # Get the product description
+        # l.add_xpath('description', '//div[@data-id="description-text"]/div/p/text()')
 
-        # Get each product option and save in a list
-        product_options = []
-        product_options_list = response.xpath('//*[contains(@id, "inventory-variation-select")]')
-        for options in product_options_list:
-            # Get list of options
-            temp_list = options.xpath('.//text()').extract()
-            # Remove '\n' strings
-            temp_list = list(map(lambda s: s.strip(), temp_list))
-            # Remove empty strings ('')
-            temp_list = list(filter(lambda s: s != '', temp_list))
+        # # Get each product option and save in a list
+        # product_options = []
+        # product_options_list = response.xpath('//*[contains(@id, "inventory-variation-select")]')
+        # for options in product_options_list:
+        #     # Get list of options
+        #     temp_list = options.xpath('.//text()').extract()
+        #     # Remove '\n' strings
+        #     temp_list = list(map(lambda s: s.strip(), temp_list))
+        #     # Remove empty strings ('')
+        #     temp_list = list(filter(lambda s: s != '', temp_list))
 
-            # Filter the 'Quantity' option
-            if temp_list[0] != '1':
-                # Create the final string:
-                # example: "Select a color: White, Black, Red, Silver"
-                product_options.append(temp_list[0] +': ' + ', '.join(temp_list[1:]))
+        #     # Filter the 'Quantity' option
+        #     if temp_list[0] != '1':
+        #         # Create the final string:
+        #         # example: "Select a color: White, Black, Red, Silver"
+        #         product_options.append(temp_list[0] +': ' + ', '.join(temp_list[1:]))
 
-        # Separate each option with a | (pipe) symbol
-        l.add_value('product_options', '|'.join(product_options))
+        # # Separate each option with a | (pipe) symbol
+        # l.add_value('product_options', '|'.join(product_options))
 
-        # Get the product rating (ex: 4.8 )
-        l.add_xpath('rating', '//a[@href="#reviews"]//input[@name="rating"]/@value')
+        # QL: it's actually store rating, not product rating
+        # l.add_xpath('rating', '//a[@href="#reviews"]//input[@name="rating"]/@value')
 
-        # Get the number of votes (number of reviews)
-        l.add_xpath('number_of_reviews', '//button[@id="same-listing-reviews-tab"]/span/text()')
+        # # Get the number of votes (number of reviews)
+        # l.add_xpath('number_of_reviews', '//button[@id="same-listing-reviews-tab"]/span/text()')
 
-        # Count the number of product images
-        images_sel = response.xpath('//ul[@data-carousel-pagination-list=""]/li/img/@data-src-delay').extract()
-        l.add_value('count_of_images', len(images_sel))
-        l.add_value('images_urls', images_sel)
+        # # Count the number of product images
+        # images_sel = response.xpath('//ul[@data-carousel-pagination-list=""]/li/img/@data-src-delay').extract()
+        # l.add_value('count_of_images', len(images_sel))
+        # l.add_value('images_urls', images_sel)
+
+        # l.add_xpath('base_image_url', '//img[contains(@data-carousel-first-image, "")]/@src')
 
         # Get the product overview
-        #l.add_xpath('overview', '//*[@class="listing-page-overview-component"]//li')
+        # l.add_xpath('overview', '//*[@class="listing-page-overview-component"]//li')
+        # # ========== End: QL comment out, feel free to add them back ==========
 
         # Get the number of people that add the product in favorites
-        l.add_xpath('favorited_by', '//*[@id="item-overview"]//*[contains(@href, "/favoriters")]/text()', re='(\d+)')
-        l.add_xpath('favorited_by', '//*[@class="listing-page-favorites-link"]/text()', re='(\d+)')
         l.add_xpath('favorited_by', '//a[contains(text(), " favorites")]/text()', re='(\d+)')
 
-        # Get the name of the Store and location
+        # Get the name of the Store 
         l.add_xpath('store_name', '//div[@id="listing-page-cart"]//span/text()')
-        #l.add_xpath('store_location', '//*[@id="shop-info"]/div')
-        #l.add_xpath('return_location', "//*[@class='js-estimated-delivery']/following-sibling::div")
 
-        # Use the chosen method to get the reviews
-        self.logger.info('Reviews scraping option: ' + str(self.reviews_opt))
 
-        # Option 3 - All reviews
-        if self.reviews_opt == 3:
-            # Getting all Reviews
-            store_name = response.xpath('//span[@itemprop="title"]//text()').extract_first()
-            # Build the reviews URL
-            rev_url = "https://www.etsy.com/shop/{}/reviews?ref=l2-see-more-feedback".format(store_name)
-            data = {'itemLoader':l, 'product_id':product_id}
+        # ============== Start: Product Reviews ==============
+        # Spider will create Ajax requests to get reviews in the product's page
+        # Only some reviews are for that product, the others are reviews for other products
+        # Each page on reviews' section has 4 reviews, change `page` in formdata to go to next page
+        ajax_url = "https://www.etsy.com/api/v3/ajax/bespoke/member/neu/specs/reviews"
 
-            # Go to the all reviews page
-            yield Request(rev_url, meta=data, callback=self.parse_reviews)
+        # Getting the session cookie
+        get_cookie = response.request.headers['Cookie'].split(b';')[0].split(b'=')
+        cookies = {get_cookie[0].decode("utf-8"):get_cookie[1].decode("utf-8")}
 
-        # Option 2 - Ajax request
-        elif self.reviews_opt == 2:
-            # Creating the Ajax request
-            # Getting the session cookie
-            get_cookie = response.request.headers['Cookie'].split(b';')[0].split(b'=')
-            cookies = {get_cookie[0].decode("utf-8"):get_cookie[1].decode("utf-8")}
+        # Getting the x-csrf-token
+        headers = {'x-csrf-token': response.xpath("//*[@name='_nnc']/@value").extract_first()}
 
-            # Getting the x-csrf-token
-            headers = {'x-csrf-token': response.xpath("//*[@name='_nnc']/@value").extract_first()}
+        # Shop Id, e.g., <meta property="og:image" content="https://i.etsystatic.com/33822210/r/il/...">
+        shop_id = response.xpath("//*[@property='og:image']/@content").extract_first().split('/')[3]
 
-            # Shop Id
-            shop_id = response.xpath("//*[@property='og:image']/@content").extract_first().split('/')[3]
-
-            formdata = {
-            'stats_sample_rate': '',
-            'specs[reviews][]': 'Listzilla_ApiSpecs_Reviews',
+        formdata = {
+            'specs[reviews][]': 'Etsy\Web\ListingPage\Reviews\ApiSpec',
             'specs[reviews][1][listing_id]': product_id,
             'specs[reviews][1][shop_id]': shop_id,
-            'specs[reviews][1][render_complete]': 'true'
-            }
+            'specs[reviews][1][render_complete]': 'true',
+            'specs[reviews][1][active_tab]': 'same_listing_reviews',
+            'specs[reviews][1][should_lazy_load_images]': 'false',
+            # the initial page of reviews
+            'specs[reviews][1][page]': "1"
 
-            data = {'itemLoader':l, 'product_id':product_id}
-            ajax_url = "https://www.etsy.com/api/v3/ajax/bespoke/member/neu/specs/reviews"
+        }
 
-            yield scrapy.FormRequest(ajax_url, headers=headers, cookies=cookies,
-                                    meta=data, formdata=formdata,
-                                    callback=self.parse_ajax_response)
-        # Option 1
-        else:
-            # Dict that saves all the reviews data
-            reviews_data = []
-            reviews_counter = 1
+        # add needed values to data to re-use them
+        data = {'itemLoader':l, 'product_id':product_id, 'ajax_url': ajax_url, 
+                'headers':headers, 'cookies':cookies, 'formdata':formdata}
 
-            # Get the data from each review
-            all_reviews = response.xpath('//*[@class="listing-page__review col-group pl-xs-0 pr-xs-0"]')
-            # Process each review
-            for r in all_reviews:
+        yield scrapy.FormRequest(ajax_url, headers=headers, cookies=cookies,
+                                meta=data, formdata=formdata,
+                                callback=self.parse_ajax_response)
+        # ============== End: Product Reviews ============== 
+  
 
-                # Get the profile URL of the reviewer
-                reviewer_profile = r.xpath(".//*[@class='display-block']/parent::*//@href").extract_first()
-                if reviewer_profile:
-                    # Build the full profile url
-                    reviewer_profile = 'www.etsy.com' + reviewer_profile
-                else:
-                    # If the profile is inactive there is no profile url
-                    continue
-
-                review_date = r.xpath(".//*[@class='text-link-underline display-inline-block mr-xs-1']/parent::*//text()").extract()[2].strip()
-                reviewer_rating = r.xpath('.//input[@name="rating"]/@value').extract_first()
-                review_content = " ".join(r.xpath('.//div[@class="overflow-hidden"]//text()').extract()).strip()
-
-                # Build the review string
-                rev_data = "Review number: {} \nProfile: {} \nRating: {} \nDate: {} \nContent: {}".format(reviews_counter, reviewer_profile, reviewer_rating, review_date, review_content)
-
-                # Save into the list
-                reviews_data.append(rev_data)
-                reviews_counter += 1
-
-            # Saves all reviews data
-            l.add_value('reviews', "\n\n".join(reviews_data))
-
-            # Increment the items counter
-            self.COUNTER += 1
-            print('\nProducts scraped: {}\n'.format(self.COUNTER))
-
-            yield l.load_item()
-
-
-    # Parse the Ajax response (Json) and extract reviews data
+    # Parse the Ajax response (Json) and extract the product reviews
     def parse_ajax_response(self, response):
-        # Get the itemLoader object from parser_products
-        l = response.meta['itemLoader']
+        meta = response.meta
+        formdata = meta["formdata"]
+        current_page_num = formdata['specs[reviews][1][page]']
 
-        # Dict that saves all the reviews data
-        reviews_data = []
-        reviews_counter = 1
+        # test
+        product_id = meta["product_id"]
+        print(f"parse_ajax_response for page product: {product_id}, review page number: {current_page_num}")
+        
+        # Get the itemLoader object from parser_products
+        l = meta['itemLoader']
+
+        if 'reviewers' in meta.keys(): # Non 1st page of reviews
+            reviewers =meta['reviewers']
+            reviewer_ratings = meta['reviewer_ratings']
+        else: # 1st page of reviews
+            reviewers = []
+            reviewer_ratings = []
 
         # Loads the Json data
         j = json.loads(response.text)
@@ -270,127 +247,58 @@ class ProductsSpider(scrapy.Spider):
         # Create the Selector
         sel = scrapy.Selector(text=html)
 
-        # Get the data from each review
-        all_reviews = sel.xpath('//*[@class="listing-page__review col-group pl-xs-0 pr-xs-0"]')
-        # Process each review
-        for r in all_reviews:
+        # Get all reviews, it contains the current item reviews and other items reviews of the same store
+        all_reviews = sel.xpath("//div[@data-appears-component-name='listing_page_reviews']//div[re:match(@data-review-region, '\w+')]",
+                                namespaces={"re": "http://exslt.org/regular-expressions"})
 
-            # Get the profile URL of the reviewer
-            reviewer_profile = r.xpath(".//*[@class='display-block']/parent::*//@href").extract_first()
-            if reviewer_profile:
-                # Build the full profile url
-                reviewer_profile = 'www.etsy.com' + reviewer_profile
-            else:
-                # If the profile is inactive there is no profile url
-                continue
-
-            review_date = r.xpath(".//*[@class='text-link-underline display-inline-block mr-xs-1']/parent::*//text()").extract()[2].strip()
-            reviewer_rating = r.xpath('.//input[@name="rating"]/@value').extract_first()
-            review_content = " ".join(r.xpath('.//div[@class="overflow-hidden"]//text()').extract()).strip()
-
-            # Build the string
-            rev_data = "Review number: {} \nProfile: {} \nRating: {} \nDate: {} \nContent: {}".format(reviews_counter, reviewer_profile, reviewer_rating, review_date, review_content)
-
-            # Saves the string in a list
-            reviews_data.append(rev_data)
-            reviews_counter += 1
-
-        # aves all reviews data
-        l.add_value('reviews', "\n\n".join(reviews_data))
-
-        # Increment the items counter
-        self.COUNTER += 1
-        print('\nProducts scraped: {}\n'.format(self.COUNTER))
-
-        yield l.load_item()
-
-
-    # Parse the Store reviews page
-    def parse_reviews(self, response):
-        # Get the itemLoader object from parser_products
-        l = response.meta['itemLoader']
-
-        # Dict that saves all the reviews data
-        # Check if this is the first access or if there is data from another reviews page
-        if 'reviews_data' in response.meta.keys():
-            reviews_data = response.meta['reviews_data']
-            reviews_counter = response.meta['reviews_counter']
-        else:
-            reviews_data = []
-            reviews_counter = 1
-
-        # Get the data from each review
-        all_reviews = response.xpath("//*[@data-region='review']")
+        # current page # item reviews
+        item_reviews_cnt = 0
 
         # Process each review
         for r in all_reviews:
+            # Get the review's product id
+            review_product_id = r.xpath(".//a[@data-review-link='']/@href").extract_first().split('/')[2]
 
-            # Get the product id of the review
-            product_id = response.xpath("//*[@data-region='listing']//@href").extract_first().split('/')[4]
+            # Only return the item review, not all store reviews
+            if product_id == review_product_id:
+                item_reviews_cnt += 1
 
-            # Check if this is the product in analysis
-            if response.meta['product_id'] == product_id:
-                # Get the profile URL of the reviewer
-                reviewer_profile = r.xpath(".//*[@class='shop2-review-attribution']//@href").extract_first()
-                if reviewer_profile:
-                    # Shorter version of the profile url
-                    reviewer_profile = reviewer_profile.split('?')[0]
+                reviewer_profile_link = r.xpath(".//a[@data-review-username='']/@href").extract_first()
+                if reviewer_profile_link:
+                    try:
+                        # Get the user token of that reviewer
+                        reviewer = reviewer_profile_link.split('?')[0].split("/")[-1]
+                    except:
+                        reviewer = "unknown"
                 else:
-                    # If the profile is inactive there is no profile url
-                    continue
+                    # reviewer as "Reviewed by Inactive"
+                    reviewer = "inactive"
 
                 reviewer_rating = r.xpath('.//input[@name="rating"]/@value').extract_first()
-                review_date = r.xpath(".//*[@class='shop2-review-attribution']//text()").extract()[2].replace('on ','').strip()
-                review_content = " ".join(r.xpath('.//div[@class="text-gray-lighter"]//text()').extract()).strip()
 
-                # Build the string
-                rev_data = "Review number: {} \nProfile: {} \nRating: {} \nDate: {} \nContent: {}".format(reviews_counter, reviewer_profile, reviewer_rating, review_date, review_content)
+                reviewers.append(reviewer)
+                reviewer_ratings.append(reviewer_rating)
 
-                # Saves the string in a list
-                reviews_data.append(rev_data)
-                reviews_counter += 1
 
-        # Go to the next reviews page
-        next_page_url = response.xpath("//*[contains(text(),'Next page')]/parent::*/@href").extract_first()
-        # Check if there is a next page
-        if next_page_url:
-            # Save the current data
-            data = {'itemLoader':l, 'product_id':product_id, 'reviews_data':reviews_data, 'reviews_counter':reviews_counter}
-            # Build the request
-            yield Request(next_page_url, meta=data, callback=self.parse_reviews)
+        # If all reviews (each page has 4 reviews) are for that product, go to next page to find more
+        if item_reviews_cnt == self.REVIEWS_CNT_PER_PAGE:
+            updated_formdata = meta["formdata"]
+            updated_formdata['specs[reviews][1][page]'] = str(int(current_page_num)+1)
+            updated_data = meta
+            updated_data["formdata"] = updated_formdata
+            updated_data["reviewers"] = reviewers
+            updated_data["reviewer_ratings"] = reviewer_ratings
 
+            yield scrapy.FormRequest(meta["ajax_url"], headers=meta["headers"], 
+                                    cookies=meta["cookies"],
+                                    meta=updated_data, formdata=updated_formdata,
+                                    callback=self.parse_ajax_response)
+
+        # Until current page # item reviews < 4, stop, no need to go to next page
         else:
-            # If there is no next page, saves the data
-             # Saves the data
-            l.add_value('reviews', "\n\n".join(reviews_data))
-            # Increment the items counter
-            self.COUNTER += 1
-            print('\nProducts scraped: {}\n'.format(self.COUNTER))
+            # add reviewers and reviewer_ratings
+            l.add_value('users', reviewers)
+            l.add_value('ratings', reviewer_ratings)
+            l.add_value('reviews_count', len(reviewer_ratings))
 
             yield l.load_item()
-
-
-    # Create the Excel file
-    def close(self, reason):
-
-        # Check if there is a CSV file in arguments
-        csv_found = False
-        for arg in sys.argv:
-            if '.csv' in arg:
-                csv_found = True
-
-        if csv_found:
-            self.logger.info('Creating Excel file')
-            #  Get the last csv file created
-            csv_file = max(glob.iglob('*.csv'), key=os.path.getctime)
-
-            wb = Workbook()
-            ws = wb.active
-
-            with open(csv_file, 'r', encoding='utf-8') as f:
-                for row in csv.reader(f):
-                    # Check if the row is not empty
-                    if row:
-                        ws.append(row)
-            # Saves the file
-            wb.save(csv_file.replace('.csv', '') + '.xlsx')

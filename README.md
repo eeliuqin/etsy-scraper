@@ -7,14 +7,15 @@ I've made the following modifications to the original code:
 - Removed `reviews_option`, now the Spider will get all usernames and corresponding user ratings in reviews section of each product page,  and save them as `users` and `ratings` respectively.
 - Commented out some unneeded attributes, such as `product_options`, `image_urls`, and `description`.
 
+
 ## Prerequisites
 
 To run the Spiders, download Python 3 from [Python.org](https://www.python.org/). 
 After install, you need to install some Python packages:
 ```
 pip install -r requirements.txt
-
 ```
+
 
 ## Usage
 
@@ -25,7 +26,7 @@ This Spider access the Etsy website and search for products based on a given sea
 Supported parameters:
 * *search* - Set the search string.
 * *total_page_count* - Set the total number of pages to be scraped. The default value is 1.
-* *start_* - Set the inital page to be scraped. The default value is 1.
+* *start_page* - Set the inital page to be scraped. The default value is 1.
 
 For example, to scrapy the first 2 pages of 'animal succulent planter', go to the project's folder and run:
 ```
@@ -38,6 +39,7 @@ If you only need the products URLS, the scraping can be faster, just add `-a url
 ### How user ratings are scraped
 
 The *users* and *ratings* data are obtained by Ajax requests to get all reviews in the product's page (simulate clicking next page to see more reviews).
+
 
 ## Scraping speed
 

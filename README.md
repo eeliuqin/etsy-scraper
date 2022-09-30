@@ -41,6 +41,11 @@ If you only need the products URLS, the scraping can be faster, just add `-a url
 The *users* and *ratings* data are obtained by Ajax requests to get all reviews in the product's page (simulate clicking next page to see more reviews).
 
 
+## Sample CSV File
+
+Check [sample-search-products.csv](https://github.com/eeliuqin/etsy-scraper/blob/master/outputs/sample-search-products.csv)
+
+
 ## Scraping speed
 
 In *setting.py*, you can configure the delay for requests for the same website:

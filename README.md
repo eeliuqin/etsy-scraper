@@ -4,6 +4,7 @@ The code was forked from [cpatrickalves/scraping-etsy](https://github.com/cpatri
 
 I've made the following modifications to the original code:
 - Added `total_page_count` and `start_page` to command.
+- Added lazy loaded product ids, otherwise each search results page has only 8 (or 12) products in DOM.
 - Removed `reviews_option`, now the Spider will get all usernames and corresponding user ratings in reviews section of each product page,  and save them as `users` and `ratings` respectively.
 - Commented out some unneeded attributes, such as `product_options`, `image_urls`, and `description`.
 

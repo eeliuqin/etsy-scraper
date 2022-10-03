@@ -16,6 +16,7 @@ import sys
 import csv
 import glob
 import json
+import re
 from scrapy.http import Request
 from etsy.items import ProductItem
 from scrapy.loader import ItemLoader
@@ -28,10 +29,10 @@ class ProductsSpider(scrapy.Spider):
     start_urls = ['https://www.etsy.com/']
 
     # Default number of pages to scrapy
-    TOTAL_PAGE_COUNT = 10
+    TOTAL_PAGE_COUNT = 1
 
     # Number of products per page of search results
-    PRODUCTS_CNT_PER_PAGE = 12
+    PRODUCTS_CNT_PER_PAGE = 64
 
     # Count the number of items scraped
     COUNTER = 0
@@ -49,8 +50,9 @@ class ProductsSpider(scrapy.Spider):
     def __init__(self, search, total_page_count=1, urls_only=False, start_page=1, *args, **kwargs):
         if search:
             # Build the search URL
-            # With start_page, we can start from the last blocked page
+            # With start_page, we can start from the last blocked page 
             self.start_urls = [f'https://www.etsy.com/search?q={search}&ref=pagination&page={start_page}']
+            
             # Set the maximum number of pages
             if total_page_count:
                 self.TOTAL_PAGE_COUNT = int(total_page_count)
@@ -71,8 +73,20 @@ class ProductsSpider(scrapy.Spider):
 
         # Get the list of products from html response
         products_list = response.xpath('//div[@data-search-results=""]/div//li//a[contains(@class, "listing-link")]/@href').extract()
+        # Response will return the first 8 products of the current search result page
         products_id_list = [product_href.split("/")[4] for product_href in products_list]
 
+        # Need to load the other products in lazy_loaded_listing_ids
+        try:
+            lazy_ids_script = response.xpath('//script[contains(text(),"lazy_loaded_listing_ids")]/text()').getall()[0]
+            lazy_ids_text = lazy_ids_script.split("lazy_loaded_listing_ids")[1]
+            lazy_product_ids_str = re.findall(r'\[(.*?)\]', lazy_ids_text)[0]
+            lazy_product_ids_list = list(lazy_product_ids_str.split(","))
+
+        except:
+            lazy_product_ids_list = []
+
+        products_id_list = products_id_list + lazy_product_ids_list
 
         print(f"#### FOUND {len(products_id_list)} PRODUCTS")
 
@@ -125,6 +139,8 @@ class ProductsSpider(scrapy.Spider):
         l = ItemLoader(item=ProductItem(), response=response)
 
         l.add_value('product_id', product_id)
+
+        self.COUNTER += 1
 
         # Get the produc Title
         l.add_xpath('title', '//meta[@property="og:title"]/@content')
